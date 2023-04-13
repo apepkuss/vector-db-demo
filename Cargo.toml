@@ -1,0 +1,12 @@
+[package]
+name = "store-embeddings"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+milvus-sdk-rust = { git = "https://github.com/apepkuss/milvus-sdk-rust.git", branch = "fix-wrong-dtype" }
+rand = "0.8.5"
+async-openai = "0.10.3"
+tokio = { version = "1.25.0", features = ["full"] }
