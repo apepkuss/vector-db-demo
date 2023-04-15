@@ -1,15 +1,20 @@
 use milvus::{
     client::Client,
+    collection::SearchOption,
     data::FieldColumn,
+    index::MetricType,
     index::{IndexParams, IndexType},
     options::CreateCollectionOptions,
     proto::common::ConsistencyLevel,
     schema::CollectionSchemaBuilder,
-    schema::FieldSchema, index::MetricType,
-    collection::SearchOption,
+    schema::FieldSchema,
 };
 
-use std::{collections::HashMap, vec};
+use std::{
+    collections::HashMap,
+    io::{self, Write},
+    vec,
+};
 
 use async_openai::{
     types::{CreateEmbeddingRequestArgs, Embedding},
@@ -17,12 +22,25 @@ use async_openai::{
 };
 
 // defualt grpc port: 19530
-const MILVUS_SERVER_URL: &str = "http://localhost:19530";
+const MILVUS_SERVER_URL: &str = "http://35.87.228.42:19530";
+
+/// The result sample of a running
+///
+/// ```bash
+/// [step-1] create embeddings for a document with openai api ... Done
+/// [step-2] store the document embeddings in Milvus ... Done
+/// [step-3] perform a vector query ... Done
+///   *** search result: 1
+///   *** result[0].field: [FieldColumn { name: "book_name", dtype: VarChar, value: String(["book2"]), dim: 1, max_length: 0 }]
+/// [step-4] roll back ... Done
+/// ```
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     // ======== step-1: create embeddings for a document with openai api ========
+    print!("[step-1] create embeddings for a document with openai api ... ");
+    io::stdout().flush().unwrap();
+
     let openai_client = AIClient::new();
 
     let book_contents = vec![
@@ -31,7 +49,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
     let book_embeddings = gen_embeddings(&openai_client, book_contents).await?;
 
+    println!("Done");
+
     // ========== step-2: store the document embeddings in Milvus ==========
+
+    print!("[step-2] store the document embeddings in Milvus ... ");
+    io::stdout().flush().unwrap();
 
     // create a milvus client
     let client = Client::new(MILVUS_SERVER_URL).await?;
@@ -65,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let collection = client
         .create_collection(collection_schema.clone(), Some(collection_option))
         .await?;
-    
+
     // create a field for book name
     let book_name_column = FieldColumn::new(
         collection.schema().get_field("book_name").unwrap(),
@@ -97,25 +120,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // load collection to the local memory
     collection.load(1).await?;
 
-    
     // confirm the collection is created successfully
     let expr = "book_name in [\"book1\", \"book2\"]";
-    let columns = collection.query::<_, [&str; 0]>(expr, []).await?;
-    println!(
-        "row num: {}",
-        columns.first().map(|c| c.len()).unwrap_or(0),
-    );
-    println!("book2: name: {}", columns[2].name);
-    println!("book2: length: {}", columns[2].value.len());
-    println!("book2: dims: {}", columns[2].dim);
+    let _columns = collection.query::<_, [&str; 0]>(expr, []).await?;
+    // println!("row num: {}", columns.first().map(|c| c.len()).unwrap_or(0),);
+    // println!("book2: name: {}", columns[2].name);
+    // println!("book2: length: {}", columns[2].value.len());
+    // println!("book2: dims: {}", columns[2].dim);
     // println!("{:?}", columns);
     // println!("{:?}", columns[2]);
-
 
     // release collection from memory after query
     collection.release().await?;
 
+    println!("Done");
+
     // ============== step-3: perform a vector query ==============
+    print!("[step-3] perform a vector query ... ");
+    io::stdout().flush().unwrap();
 
     // load the newly created collection to memory before query
     let collection = client.get_collection("flows_network_book").await?;
@@ -138,12 +160,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
 
-    // display the search result
-    println!("search result: {:?}", result.len());
-    println!("result[0].field: {:?}", result[0].field);
+    println!("Done");
 
+    // display the search result
+    println!("  *** search result: {:?}", result.len());
+    println!("  *** result[0].field: {:?}", result[0].field);
+
+    // =============== step-4: roll back ===============
+    print!("[step-4] roll back ... ");
+    io::stdout().flush().unwrap();
+
+    if client.has_collection(collection_name).await? {
+        client.drop_collection(collection_name).await?;
+    }
+
+    println!("Done");
 
     Ok(())
+}
+
+async fn gen_embeddings(
+    client: &AIClient,
+    text: Vec<&str>,
+) -> Result<Vec<Embedding>, Box<dyn std::error::Error>> {
+    let request = CreateEmbeddingRequestArgs::default()
+        .model("text-embedding-ada-002")
+        .input(text)
+        .build()?;
+
+    let response = client.embeddings().create(request).await?;
+
+    Ok(response.data)
 }
 
 // fn gen_random_f32_vector(n: i64) -> Vec<f32> {
@@ -155,14 +202,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //     }
 //     data
 // }
-
-async fn gen_embeddings(client: &AIClient, text: Vec<&str>) -> Result<Vec<Embedding>, Box<dyn std::error::Error>> {
-    let request = CreateEmbeddingRequestArgs::default()
-        .model("text-embedding-ada-002")
-        .input(text)
-        .build()?;
-
-    let response = client.embeddings().create(request).await?;
-
-    Ok(response.data)
-}
